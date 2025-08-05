@@ -56,12 +56,44 @@ public class DeleteUserCausesHandler implements
                         .withBody(responseBody);
             }
             boolean success = deleteUserCauses(userId,causeId);
+            if(success) {
+                decrementCauseRecord(causeId);
+            }
             return response(200, "cause unfollowed successfully.");
         } catch (Exception e) {
             e.printStackTrace();
             return response(500, "Transaction failed: " + e.getMessage());
         }
     }
+
+    private boolean decrementCauseRecord(String causeId) {
+        try {
+            int delta = -1;
+
+            Map<String, AttributeValue> key = Map.of("cause_id", AttributeValue.fromS(causeId));
+            Map<String, AttributeValue> values = new HashMap<>();
+            values.put(":delta", AttributeValue.fromN(Integer.toString(delta)));
+            values.put(":zero", AttributeValue.fromN("0"));
+
+            UpdateItemRequest request = UpdateItemRequest.builder()
+                    .tableName("causes")
+                    .key(key)
+                    .updateExpression("SET follower_count = if_not_exists(follower_count, :zero) + :delta")
+                    .expressionAttributeValues(values)
+                    .conditionExpression("attribute_exists(cause_id)")
+                    .build();
+
+            dynamoDb.updateItem(request);
+            return true;
+        } catch (ConditionalCheckFailedException e) {
+            System.err.println("Cause not found: " + causeId);
+            throw e;
+        } catch (DynamoDbException e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
     private APIGatewayProxyResponseEvent response(int status, String body)  {
         ResponseMessage message = new ResponseMessage(status,body,
                 body);

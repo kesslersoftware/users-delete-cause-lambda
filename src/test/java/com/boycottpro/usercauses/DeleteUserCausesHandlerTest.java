@@ -49,7 +49,8 @@ public class DeleteUserCausesHandlerTest {
         QueryResponse queryResponse = QueryResponse.builder().items(List.of(item)).build();
         when(dynamoDb.query(any(QueryRequest.class))).thenReturn(queryResponse);
         when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class))).thenReturn(BatchWriteItemResponse.builder().build());
-
+        when(dynamoDb.updateItem(any(UpdateItemRequest.class)))
+                .thenReturn(UpdateItemResponse.builder().build());
         // Act
         var result = handler.handleRequest(event, context);
 
