@@ -5,6 +5,7 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.boycottpro.models.ResponseMessage;
+import com.boycottpro.utilities.JwtUtility;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -32,19 +33,10 @@ public class DeleteUserCausesHandler implements
     @Override
     public APIGatewayProxyResponseEvent handleRequest(APIGatewayProxyRequestEvent event, Context context) {
         try {
+            String sub = JwtUtility.getSubFromRestEvent(event);
+            if (sub == null) return response(401, "Unauthorized");
             Map<String, String> pathParams = event.getPathParameters();
-            String userId = (pathParams != null) ? pathParams.get("user_id") : null;
             String causeId = (pathParams != null) ? pathParams.get("cause_id") : null;
-            if (userId == null || userId.isEmpty()) {
-                ResponseMessage message = new ResponseMessage(400,
-                        "sorry, there was an error processing your request",
-                        "user_id not present");
-                String responseBody = objectMapper.writeValueAsString(message);
-                return new APIGatewayProxyResponseEvent()
-                        .withStatusCode(400)
-                        .withHeaders(Map.of("Content-Type", "application/json"))
-                        .withBody(responseBody);
-            }
             if (causeId == null || causeId.isEmpty()) {
                 ResponseMessage message = new ResponseMessage(400,
                         "sorry, there was an error processing your request",
@@ -55,7 +47,7 @@ public class DeleteUserCausesHandler implements
                         .withHeaders(Map.of("Content-Type", "application/json"))
                         .withBody(responseBody);
             }
-            boolean success = deleteUserCauses(userId,causeId);
+            boolean success = deleteUserCauses(sub,causeId);
             if(success) {
                 decrementCauseRecord(causeId);
             }

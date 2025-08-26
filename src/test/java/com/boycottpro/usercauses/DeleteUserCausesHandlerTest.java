@@ -12,6 +12,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -39,7 +40,15 @@ public class DeleteUserCausesHandlerTest {
         String causeId = "cause456";
 
         APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent()
-                .withPathParameters(Map.of("user_id", userId, "cause_id", causeId));
+                .withPathParameters(Map.of( "cause_id", causeId));
+        Map<String, String> claims = Map.of("sub", "11111111-2222-3333-4444-555555555555");
+        Map<String, Object> authorizer = new HashMap<>();
+        authorizer.put("claims", claims);
+
+        APIGatewayProxyRequestEvent.ProxyRequestContext rc = new APIGatewayProxyRequestEvent.ProxyRequestContext();
+        rc.setAuthorizer(authorizer);
+        event.setRequestContext(rc);
+
 
         Map<String, AttributeValue> item = Map.of(
                 "user_id", AttributeValue.fromS(userId),
@@ -72,19 +81,24 @@ public class DeleteUserCausesHandlerTest {
 
     @Test
     void handleRequest_missingUserId_returns400() {
-        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent()
-                .withPathParameters(Map.of("cause_id", "cause123"));
+        APIGatewayProxyRequestEvent event = null;
 
-        var result = handler.handleRequest(event, context);
+        var response = handler.handleRequest(event, mock(Context.class));
 
-        assertEquals(400, result.getStatusCode());
-        assertTrue(result.getBody().contains("user_id not present"));
+        assertEquals(401, response.getStatusCode());
+        assertTrue(response.getBody().contains("Unauthorized"));
     }
 
     @Test
     void handleRequest_missingCauseId_returns400() {
-        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent()
-                .withPathParameters(Map.of("user_id", "user123"));
+        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent();
+        Map<String, String> claims = Map.of("sub", "11111111-2222-3333-4444-555555555555");
+        Map<String, Object> authorizer = new HashMap<>();
+        authorizer.put("claims", claims);
+
+        APIGatewayProxyRequestEvent.ProxyRequestContext rc = new APIGatewayProxyRequestEvent.ProxyRequestContext();
+        rc.setAuthorizer(authorizer);
+        event.setRequestContext(rc);
 
         var result = handler.handleRequest(event, context);
 
@@ -95,7 +109,15 @@ public class DeleteUserCausesHandlerTest {
     @Test
     void handleRequest_dynamoException_returns500() {
         APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent()
-                .withPathParameters(Map.of("user_id", "user123", "cause_id", "cause456"));
+                .withPathParameters(Map.of( "cause_id", "cause456"));
+        Map<String, String> claims = Map.of("sub", "11111111-2222-3333-4444-555555555555");
+        Map<String, Object> authorizer = new HashMap<>();
+        authorizer.put("claims", claims);
+
+        APIGatewayProxyRequestEvent.ProxyRequestContext rc = new APIGatewayProxyRequestEvent.ProxyRequestContext();
+        rc.setAuthorizer(authorizer);
+        event.setRequestContext(rc);
+
 
         when(dynamoDb.query(any(QueryRequest.class))).thenThrow(RuntimeException.class);
 
