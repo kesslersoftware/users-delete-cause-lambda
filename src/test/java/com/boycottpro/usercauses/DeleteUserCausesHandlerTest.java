@@ -118,12 +118,11 @@ public class DeleteUserCausesHandlerTest {
         rc.setAuthorizer(authorizer);
         event.setRequestContext(rc);
 
-
         when(dynamoDb.query(any(QueryRequest.class))).thenThrow(RuntimeException.class);
 
-        var result = handler.handleRequest(event, context);
+        var response = handler.handleRequest(event, context);
 
-        assertEquals(500, result.getStatusCode());
-        assertTrue(result.getBody().contains("Transaction failed"));
+        assertEquals(500, response.getStatusCode());
+        assertTrue(response.getBody().contains("Unexpected server error"));
     }
 }

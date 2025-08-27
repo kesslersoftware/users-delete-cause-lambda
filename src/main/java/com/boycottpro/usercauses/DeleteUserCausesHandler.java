@@ -32,30 +32,41 @@ public class DeleteUserCausesHandler implements
 
     @Override
     public APIGatewayProxyResponseEvent handleRequest(APIGatewayProxyRequestEvent event, Context context) {
+        String sub = null;
         try {
-            String sub = JwtUtility.getSubFromRestEvent(event);
-            if (sub == null) return response(401, "Unauthorized");
+            sub = JwtUtility.getSubFromRestEvent(event);
+            if (sub == null) return response(401, Map.of("message", "Unauthorized"));
             Map<String, String> pathParams = event.getPathParameters();
             String causeId = (pathParams != null) ? pathParams.get("cause_id") : null;
             if (causeId == null || causeId.isEmpty()) {
                 ResponseMessage message = new ResponseMessage(400,
                         "sorry, there was an error processing your request",
                         "cause_id not present");
-                String responseBody = objectMapper.writeValueAsString(message);
-                return new APIGatewayProxyResponseEvent()
-                        .withStatusCode(400)
-                        .withHeaders(Map.of("Content-Type", "application/json"))
-                        .withBody(responseBody);
+                return response(400, message);
             }
             boolean success = deleteUserCauses(sub,causeId);
             if(success) {
                 decrementCauseRecord(causeId);
             }
-            return response(200, "cause unfollowed successfully.");
+            return response(200, Map.of("message",
+                    "cause unfollowed successfully."));
         } catch (Exception e) {
-            e.printStackTrace();
-            return response(500, "Transaction failed: " + e.getMessage());
+            System.out.println(e.getMessage() + " for user " + sub);
+            return response(500,Map.of("error", "Unexpected server error: " + e.getMessage()) );
         }
+    }
+
+    private APIGatewayProxyResponseEvent response(int status, Object body) {
+        String responseBody = null;
+        try {
+            responseBody = objectMapper.writeValueAsString(body);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+        return new APIGatewayProxyResponseEvent()
+                .withStatusCode(status)
+                .withHeaders(Map.of("Content-Type", "application/json"))
+                .withBody(responseBody);
     }
 
     private boolean decrementCauseRecord(String causeId) {
@@ -86,20 +97,6 @@ public class DeleteUserCausesHandler implements
         }
     }
 
-    private APIGatewayProxyResponseEvent response(int status, String body)  {
-        ResponseMessage message = new ResponseMessage(status,body,
-                body);
-        String responseBody = null;
-        try {
-            responseBody = objectMapper.writeValueAsString(message);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
-        return new APIGatewayProxyResponseEvent()
-                .withStatusCode(status)
-                .withHeaders(Map.of("Content-Type", "application/json"))
-                .withBody(responseBody);
-    }
     private boolean deleteUserCauses(String userId, String causeId) {
         try {
             QueryRequest queryRequest = QueryRequest.builder()
