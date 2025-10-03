@@ -2,6 +2,7 @@ package com.boycottpro.usercauses;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +19,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import java.lang.reflect.Field;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteUserCausesHandlerTest {
@@ -125,4 +128,171 @@ public class DeleteUserCausesHandlerTest {
         assertEquals(500, response.getStatusCode());
         assertTrue(response.getBody().contains("Unexpected server error"));
     }
+
+    @Test
+    public void testDefaultConstructor() {
+        // Test the default constructor coverage
+        // Note: This may fail in environments without AWS credentials/region configured
+        try {
+            DeleteUserCausesHandler handler = new DeleteUserCausesHandler();
+            assertNotNull(handler);
+
+            // Verify DynamoDbClient was created (using reflection to access private field)
+            try {
+                Field dynamoDbField = DeleteUserCausesHandler.class.getDeclaredField("dynamoDb");
+                dynamoDbField.setAccessible(true);
+                DynamoDbClient dynamoDb = (DynamoDbClient) dynamoDbField.get(handler);
+                assertNotNull(dynamoDb);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                fail("Failed to access DynamoDbClient field: " + e.getMessage());
+            }
+        } catch (software.amazon.awssdk.core.exception.SdkClientException e) {
+            // AWS SDK can't initialize due to missing region configuration
+            // This is expected in Jenkins without AWS credentials - test passes
+            System.out.println("Skipping DynamoDbClient verification due to AWS SDK configuration: " + e.getMessage());
+        }
+    }
+
+    @Test
+    public void testUnauthorizedUser() {
+        // Test the unauthorized block coverage
+        handler = new DeleteUserCausesHandler(dynamoDb);
+
+        // Create event without JWT token (or invalid token that returns null sub)
+        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent();
+        // No authorizer context, so JwtUtility.getSubFromRestEvent will return null
+
+        APIGatewayProxyResponseEvent response = handler.handleRequest(event, null);
+
+        assertEquals(401, response.getStatusCode());
+        assertTrue(response.getBody().contains("Unauthorized"));
+    }
+
+    @Test
+    public void testJsonProcessingExceptionInResponse() throws Exception {
+        // Test JsonProcessingException coverage in response method by using reflection
+        handler = new DeleteUserCausesHandler(dynamoDb);
+
+        // Use reflection to access the private response method
+        java.lang.reflect.Method responseMethod = DeleteUserCausesHandler.class.getDeclaredMethod("response", int.class, Object.class);
+        responseMethod.setAccessible(true);
+
+        // Create an object that will cause JsonProcessingException
+        Object problematicObject = new Object() {
+            public Object writeReplace() throws java.io.ObjectStreamException {
+                throw new java.io.NotSerializableException("Not serializable");
+            }
+        };
+
+        // Create a circular reference object that will cause JsonProcessingException
+        Map<String, Object> circularMap = new HashMap<>();
+        circularMap.put("self", circularMap);
+
+        // This should trigger the JsonProcessingException -> RuntimeException path
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+            try {
+                responseMethod.invoke(handler, 500, circularMap);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                if (e.getCause() instanceof RuntimeException) {
+                    throw (RuntimeException) e.getCause();
+                }
+                throw new RuntimeException(e.getCause());
+            }
+        });
+
+        // Verify it's ultimately caused by JsonProcessingException
+        Throwable cause = exception.getCause();
+        assertTrue(cause instanceof JsonProcessingException,
+                "Expected JsonProcessingException, got: " + cause.getClass().getSimpleName());
+    }
+
+    @Test
+    public void testEmptyCauseId() {
+        // Test line 47: when cause_id is empty string
+        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent();
+        Map<String, String> claims = Map.of("sub", "11111111-2222-3333-4444-555555555555");
+        Map<String, Object> authorizer = new HashMap<>();
+        authorizer.put("claims", claims);
+
+        APIGatewayProxyRequestEvent.ProxyRequestContext rc = new APIGatewayProxyRequestEvent.ProxyRequestContext();
+        rc.setAuthorizer(authorizer);
+        event.setRequestContext(rc);
+
+        // Set empty string cause_id
+        event.setPathParameters(Map.of("cause_id", ""));
+
+        APIGatewayProxyResponseEvent response = handler.handleRequest(event, context);
+
+        assertEquals(400, response.getStatusCode());
+        assertTrue(response.getBody().contains("cause_id not present"));
+    }
+
+    @Test
+    public void testConditionalCheckFailedExceptionInDecrementCauseRecord() {
+        // Test lines 98-99: ConditionalCheckFailedException in decrementCauseRecord
+        String causeId = "cause456";
+
+        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent()
+                .withPathParameters(Map.of("cause_id", causeId));
+        Map<String, String> claims = Map.of("sub", "11111111-2222-3333-4444-555555555555");
+        Map<String, Object> authorizer = new HashMap<>();
+        authorizer.put("claims", claims);
+
+        APIGatewayProxyRequestEvent.ProxyRequestContext rc = new APIGatewayProxyRequestEvent.ProxyRequestContext();
+        rc.setAuthorizer(authorizer);
+        event.setRequestContext(rc);
+
+        // Mock successful deleteUserCauses
+        Map<String, AttributeValue> item = Map.of(
+                "user_id", AttributeValue.fromS("user123"),
+                "cause_id", AttributeValue.fromS(causeId)
+        );
+        QueryResponse queryResponse = QueryResponse.builder().items(List.of(item)).build();
+        when(dynamoDb.query(any(QueryRequest.class))).thenReturn(queryResponse);
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class))).thenReturn(BatchWriteItemResponse.builder().build());
+
+        // Mock ConditionalCheckFailedException on updateItem (decrementCauseRecord)
+        when(dynamoDb.updateItem(any(UpdateItemRequest.class)))
+                .thenThrow(ConditionalCheckFailedException.builder().message("Cause does not exist").build());
+
+        APIGatewayProxyResponseEvent response = handler.handleRequest(event, context);
+
+        assertEquals(500, response.getStatusCode());
+        assertTrue(response.getBody().contains("Unexpected server error"));
+    }
+
+    @Test
+    public void testDynamoDbExceptionInDecrementCauseRecord() {
+        // Test lines 100-102: DynamoDbException in decrementCauseRecord
+        String causeId = "cause456";
+
+        APIGatewayProxyRequestEvent event = new APIGatewayProxyRequestEvent()
+                .withPathParameters(Map.of("cause_id", causeId));
+        Map<String, String> claims = Map.of("sub", "11111111-2222-3333-4444-555555555555");
+        Map<String, Object> authorizer = new HashMap<>();
+        authorizer.put("claims", claims);
+
+        APIGatewayProxyRequestEvent.ProxyRequestContext rc = new APIGatewayProxyRequestEvent.ProxyRequestContext();
+        rc.setAuthorizer(authorizer);
+        event.setRequestContext(rc);
+
+        // Mock successful deleteUserCauses
+        Map<String, AttributeValue> item = Map.of(
+                "user_id", AttributeValue.fromS("user123"),
+                "cause_id", AttributeValue.fromS(causeId)
+        );
+        QueryResponse queryResponse = QueryResponse.builder().items(List.of(item)).build();
+        when(dynamoDb.query(any(QueryRequest.class))).thenReturn(queryResponse);
+        when(dynamoDb.batchWriteItem(any(BatchWriteItemRequest.class))).thenReturn(BatchWriteItemResponse.builder().build());
+
+        // Mock generic DynamoDbException on updateItem (decrementCauseRecord)
+        when(dynamoDb.updateItem(any(UpdateItemRequest.class)))
+                .thenThrow(DynamoDbException.builder().message("DynamoDB error").build());
+
+        APIGatewayProxyResponseEvent response = handler.handleRequest(event, context);
+
+        assertEquals(500, response.getStatusCode());
+        assertTrue(response.getBody().contains("Unexpected server error"));
+    }
+
 }

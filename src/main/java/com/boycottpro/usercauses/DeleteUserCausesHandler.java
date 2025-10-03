@@ -6,6 +6,7 @@ import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.boycottpro.models.ResponseMessage;
 import com.boycottpro.utilities.JwtUtility;
+import com.boycottpro.utilities.Logger;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -33,25 +34,34 @@ public class DeleteUserCausesHandler implements
     @Override
     public APIGatewayProxyResponseEvent handleRequest(APIGatewayProxyRequestEvent event, Context context) {
         String sub = null;
+        int lineNum = 37;
         try {
             sub = JwtUtility.getSubFromRestEvent(event);
-            if (sub == null) return response(401, Map.of("message", "Unauthorized"));
+            if (sub == null) {
+            Logger.error(41, sub, "user is Unauthorized");
+            return response(401, Map.of("message", "Unauthorized"));
+            }
+            lineNum = 44;
             Map<String, String> pathParams = event.getPathParameters();
             String causeId = (pathParams != null) ? pathParams.get("cause_id") : null;
             if (causeId == null || causeId.isEmpty()) {
+                Logger.error(48, sub, "cause_id not present");
                 ResponseMessage message = new ResponseMessage(400,
                         "sorry, there was an error processing your request",
                         "cause_id not present");
                 return response(400, message);
             }
+            lineNum = 54;
             boolean success = deleteUserCauses(sub,causeId);
+            lineNum = 56;
             if(success) {
                 decrementCauseRecord(causeId);
             }
+            lineNum = 60;
             return response(200, Map.of("message",
                     "cause unfollowed successfully."));
         } catch (Exception e) {
-            System.out.println(e.getMessage() + " for user " + sub);
+            Logger.error(lineNum, sub, e.getMessage());
             return response(500,Map.of("error", "Unexpected server error: " + e.getMessage()) );
         }
     }
@@ -72,12 +82,10 @@ public class DeleteUserCausesHandler implements
     private boolean decrementCauseRecord(String causeId) {
         try {
             int delta = -1;
-
             Map<String, AttributeValue> key = Map.of("cause_id", AttributeValue.fromS(causeId));
             Map<String, AttributeValue> values = new HashMap<>();
             values.put(":delta", AttributeValue.fromN(Integer.toString(delta)));
             values.put(":zero", AttributeValue.fromN("0"));
-
             UpdateItemRequest request = UpdateItemRequest.builder()
                     .tableName("causes")
                     .key(key)
@@ -85,14 +93,11 @@ public class DeleteUserCausesHandler implements
                     .expressionAttributeValues(values)
                     .conditionExpression("attribute_exists(cause_id)")
                     .build();
-
             dynamoDb.updateItem(request);
             return true;
         } catch (ConditionalCheckFailedException e) {
-            System.err.println("Cause not found: " + causeId);
             throw e;
         } catch (DynamoDbException e) {
-            e.printStackTrace();
             throw e;
         }
     }
